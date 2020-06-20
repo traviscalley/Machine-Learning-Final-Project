@@ -1,0 +1,206 @@
+---
+title: "CS 750 Final Project: Predicting Happiness by Country"
+output: pdf_document
+author: Devin Bouchard, Travis Calley, Ryan Reynolds
+---
+
+```{r message = FALSE, echo = FALSE}
+# libraries
+library(dplyr)
+library(glmnet)
+library(glmnetUtils)
+library(ggplot2)
+library(boot)
+library(gbm)
+library(leaps)
+library(e1071)
+set.seed(75)
+
+predict.regsubsets = function(object, newdata, id, ...) {
+  form = as.formula(object$call[[2]])
+  mat = model.matrix(form, newdata)
+  coefi = coef(object, id = id)
+  xvars = names(coefi)
+  mat[,xvars]%*%coefi
+}
+```
+
+```{r echo = FALSE}
+d.all= read.csv("Combined Data.csv")
+# split into training and test sets
+i <- sample(nrow(d.all), 0.7*nrow(d.all))
+train <- d.all[i,]
+test <- d.all[-i,]
+```
+
+
+- **Motivation/Introduction**: Which addresses these issues:
+
+  1. What is the problem? 
+  The problem in this project is to determine and generate models to predict happiness of a country based on the following predictors: economy, family, health (life expectancy), trust (government corruption), freedom, and generosity.
+  
+  2. Is it prediction or inference? 
+  This is an inference problem because we are trying to learn about the data generation process. We are trying to generate a model that can accurately predict a given countries happiness score/rank.
+  
+  3. Is it classification or regression?
+  This is a regression problem because we are aiming to predict a hapiness rank which is a continuous value. There happiness score is a value that is scaled accordingly and does not categorize the data set. We are using a few factors to predict happiness score/rank.
+  
+  4. Why is the problem important?
+  This problem is important because happiness is important. Hapiness is vital in a society to achieve goals and  innovation to advance humanity. Without hapiness motivation is low and nobody would be willing to do anything for the greater good. In this project we will understand the things that make a population happy in the hope of understanding what would have to changed to increase the happiness of a large group.
+  
+  
+  5. What does success look like?
+  A successful project would have a training data set that has all of the features included but the predictor for happiness rank. This predictor would then be predicted based on the hapiness rank of other countries with the same features. We should also be able to look at the coorelation of these features the predictor to determine with of the feawtures has the largest impact in making people happy.
+  
+  
+  6. What are the data sources that will be used. Is it likely that they will suffice to achieve the goals?
+  We will be using data from the years 2015-2019 for happiness rank by country. The data was downloaded from https://www.kaggle.com/unsdsn/world-happiness.
+  
+
+- **Evaluation methodology**: You should answer questions like:
+
+  1. What is the right metric for success? 
+  A good metric would be the Mean square error of our predicted hapininess rankings for a country compared to the actual hapiness rankings given in the original data set. This number should be as small.
+  
+  2. How good does it need to be for the project to succeed? For example, does the prediction error needs to be at most 5%? What about the area under the curve. Argue why.
+  Determining which countries are the happiest based on several factors is important for individuals as well as countries as a whole. If an individual is looking to live somewhre else, this data would be useful to see what factors matter most to people in the area as well as the overall happiness of that country. For countries, it would be useful to look at this data and see where their country is lacking and try to improve on those areas. Countries would be able to use the models we create to see where they would rank based on changes in each of the feature categories. Therefore, the data should have at most a 10% prediction error. It is important to ensure a low prediction error on data that could have a strong influence on decisions people make which could have a strong influence on their lives or the lives of others.
+  
+  3. Use a test set? Bootstrapping to understand parameter variability?
+  We used a test set to validate the methods we chose to analyze the data. Since there were over 700 data points in the data set, we felt that splitting the data into training and test sets was enough to verify the performance. We split the data into 70% training and 30% test. 
+  
+  4. How to make sure that the results are valid?
+  Comparing the models to a subset of the data and calculating the MSE is a useful way to determine the validity of the moel. It is also wise to use bootstrapping here to be sure one can have a strong confidence in the results that are obtained.
+  
+- **Implementation**
+
+```{r echo = FALSE}
+# inference of Generosity
+ggplot(data = d.all, mapping = aes(x = Generosity, y = Happiness.Score)) + geom_point()
+
+# inference of Economy
+ggplot(data = d.all, mapping = aes(x = Economy, y = Happiness.Score)) + geom_point()
+
+# inference of Family
+ggplot(data = d.all, mapping = aes(x = Family, y = Happiness.Score)) + geom_point()
+
+# inference of Health
+ggplot(data = d.all, mapping = aes(x = Health, y = Happiness.Score)) + geom_point()
+
+# inference of Freedom
+ggplot(data = d.all, mapping = aes(x = Freedom, y = Happiness.Score)) + geom_point()
+
+# inference of Trust
+ggplot(data = d.all, mapping = aes(x = Trust, y = Happiness.Score)) + geom_point()
+```
+
+Using the plots of the above features we can determine the features that have the largest affect on the hapiness scores of the countries in our dataset. If the data on the plot is in a linear shape with a high slope, then the feature has high coorelation to hapiness.
+
+Based on the plots, the features with the highest coorelation are Economy, Family, and Health. This tells us that for a population to be happiest, it is most important fot them to have high values in these areas of life.
+
+```{r warning = FALSE, echo = FALSE}
+# Best Subset Selection
+n = 10
+folds = sample(1:n, nrow(train), replace=TRUE)
+errors = matrix(NA, n, 6, dimnames = list(NULL, paste(1:6)))
+
+for(k in 1:n) {
+  best = regsubsets(Happiness.Score ~ Economy + Family + Health + Freedom + Trust + Generosity, data = train[folds != k,], nvmax = 6)
+  for(i in 1:6) {
+    prediction = predict(best, train[folds == k,], id = i)
+    errors[k, i] = mean((train$Happiness.Score[folds == k] - prediction)^2)
+  }
+}
+summary(best)
+meanErrors = apply(errors, 2, mean)
+par(mfrow = c(1, 1))
+plot(meanErrors, type = 'b')
+```
+If using few features was desired, this best subset selection algorithm would provide the best set of features to use based on the total number of desired features. The printout above gives the best subset of features to use for every number of features from 1 to 6 in this case. For example, if it was desired to only use one feature, the printout above says using the "Economy" feature will yield the most accurate result.
+
+```{r echo = FALSE}
+# linear
+lr <- lm(Happiness.Score ~ Economy + Family + Family:Health + Health + Freedom + Trust + Generosity, data = train)
+lp <- predict(lr, newdata = test)
+lmse <- mean((lp - test$Happiness.Score)^2)
+cat("Linear\n")
+cat("Test MSE:", lmse)
+
+# lasso
+lasso.reg <- cv.glmnet(Happiness.Score ~ Economy + Family + Family:Health + Health + Freedom + Trust + Generosity, alpha = 1, data = train, nfolds = 50)
+lasso.pred <- predict(lasso.reg, newdata = test, s = lasso.reg$lambda.min)
+lasso.lambda <- lasso.reg$lambda.min
+lasso.mse <- mean((lasso.pred - test$Happiness.Score)^2)
+cat("\n\nLasso")
+cat("\nTest MSE:", lasso.mse)
+
+# radial svm
+rsvm <- svm(Happiness.Score ~ Economy + Family + Family:Health + Health + Freedom + Trust + Generosity, data = train, kernel = "radial", gamma = 0.1, cost = 12)
+rsvm.pred <- predict(rsvm, newdata = test)
+rsvm.mse <- mean((rsvm.pred - test$Happiness.Score)^2)
+cat("\n\nSVM radial")
+cat("\nTest MSE:", rsvm.mse)
+
+# linear svm
+lsvm <- svm(Happiness.Score ~ Economy + Family + Family:Health  + Health + Freedom + Trust + Generosity, data = train, kernel = "linear", gamma = 0.1, cost = 12)
+lsvm.pred <- predict(lsvm, newdata = test)
+lsvm.mse <- mean((lsvm.pred - test$Happiness.Score)^2)
+cat("\n\nSVM linear")
+cat("\nTest MSE:", lsvm.mse)
+
+set.seed(75)
+# Boosted Tree
+boostTest = test$Happiness.Score
+boost = gbm(Happiness.Score ~ Economy + Family + Family:Health + Health + Freedom + Trust + Generosity, data = train, distribution = "gaussian", n.trees=500, interaction.depth = 4)
+boostPredict = predict(boost, newdata = test, n.trees=500)
+boost.mse = mean((boostPredict - boostTest)^2)
+cat("\n\nBoosted Tree")
+cat("\nTest MSE:", boost.mse)
+```
+
+```{r echo = FALSE}
+bs <- function(formula, data, indices) {
+  d <- data[indices,]
+  fit <- lm(formula, d)
+  return(summary(fit)$r.square)
+}
+
+output.boot <- boot(data = d.all, statistic = bs, R = 1500, formula = Happiness.Score ~ Economy + Family + Family:Health + Health + Freedom + Trust + Generosity)
+output.boot
+plot(output.boot)
+```
+
+```{r echo = FALSE}
+dfPred = data.frame(rsvm.pred)
+dfPred <- dfPred %>%
+  rename(Happiness.Score.Pred = rsvm.pred)
+happinessPrediction <- cbind(test, dfPred)
+happinessPrediction <- happinessPrediction[,c(1, 2, 3, 10, 4, 5, 6, 7, 8, 9)]
+
+for (i in 1:nrow(happinessPrediction)) {
+  happinessPrediction[i,"Happiness.Rank"] = i
+}
+
+happinessPrediction <- happinessPrediction %>% arrange(desc(Happiness.Score.Pred))
+happinessPrediction$Happiness.Rank.Pred <- 0
+for (i in 1:nrow(happinessPrediction)) {
+  happinessPrediction[i,"Happiness.Rank.Pred"] = i
+}
+
+happinessPrediction <- happinessPrediction[,c(1, 2, 3, 11, 4, 5, 6, 7, 8, 9, 10)]
+
+mse <- sqrt(mean((happinessPrediction$Happiness.Rank.Pred - happinessPrediction$Happiness.Rank)^2))
+cat("Test RMSE:\n")
+cat(mse)
+
+head(happinessPrediction)
+```
+
+
+- **Results**: Describe the results of the method. Describe how well the method did in the evaluation and compare with prior work (if applicable). Discuss what the results mean in the context of the problem definition. Is there anything that can be done to improve the results, or are they good enough? What about confidence in the results?
+
+Knowing that this was a regression and inference problem, we chose methods that would best fit this classification. We started by attempting a best subset selection. The data we had did not have many features but we wanted to see if any of the features had a negative effect on model prediction. It turned out that using a subset of 4 and 5 features was very close to using all six features. Knowing this, we decided to fit models with all six features since the Test MSEs for six features was always better than four or five. The first model we tried was a linear regression model which attempted to predict the happiness score based on the six relevant features: Economy, Family, Health, Freedom, Trust, and Generosity. The MSE obtained from this method was about 0.301. We tried using bootstrapping with multiple regression methods; however, we were only able to get it working using linear regression. The linear regression results from boosting showed a quantile plot that strongly follows a normal distribution with high confidence. The histogram shows that most of the data falls within 2 standard deviations of the mean, these are both good results that give us strong confidence for linear regression.
+
+To create a model that more correctly predicted happiness rank and score we added an interaction effect between the features Family and Health (Family:Health). Adding this interaction effect lowered MSE across the board for all models that were created. Also, when comparing the ranks in the above table it made the results more closely reflect what we were expecting. Finland was accurately predicted as the most happy country with the other results not being too far off from what they were supposed to be.
+
+The next method we tried was Lasso. Even though we had more data points than features, we found that Lasso provided a good model on the miniproject datasets which were similar to this happiness dataset. The Lasso method also used all six features and produced almost the same MSE as the linear model at just over 0.301. In addition to these methods, we also tried SVMs and Boosted Trees. We found that a radial SVM performed the best out of any method. THe MSE for a radial SVM using six features was 0.259. We also compared the ranks themselves instead of just the scores that were predicted. The ranks appear closer than the predicted score makes them seem. While they are not perfectly ordered, each rank is within about 5-10 places of where it actually should have been.
+
